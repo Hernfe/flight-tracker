@@ -10,6 +10,8 @@ from alembic import context
 from app.config import settings
 from app.core.db import Base
 import app.modules.destinations.models  # noqa: F401  imported so autogenerate sees the model
+import app.modules.flights.models  # noqa: F401
+import app.modules.price_history.models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
