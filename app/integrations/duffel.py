@@ -52,6 +52,8 @@ class DuffelClient:
                 json=body,
             )
             response.raise_for_status()
-            return response.status_code, response.json(), response.headers.get(
-                "x-request-id"
+            return (
+                response.status_code,
+                response.json(),
+                response.headers.get("x-request-id"),
             )
