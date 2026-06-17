@@ -169,17 +169,36 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
 
 
 async def schedule_due_polls(ctx: dict) -> None:
+    redis = ctx["redis"]
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    daily_key = f"duffel:searches:{today.isoformat()}"
+    monthly_key = f"duffel:searches:{today.strftime('%Y-%m')}"
+    daily_limit = settings.duffel_daily_search_budget
+    monthly_limit = settings.duffel_monthly_search_budget
+
     async with SessionLocal() as session:
-        now = datetime.now(timezone.utc)
         result = await session.scalars(
-            select(PollTarget).where(
-                PollTarget.active.is_(True), PollTarget.next_poll_at <= now
-            )
+            select(PollTarget)
+            .where(PollTarget.active.is_(True), PollTarget.next_poll_at <= now)
+            .order_by(PollTarget.is_user_tracked.desc())
         )
         targets = list(result)
 
     for target in targets:
-        await ctx["redis"].enqueue_job("poll_target", target.id)
+        daily_count = await redis.incr(daily_key)
+        if daily_count == 1:
+            await redis.expire(daily_key, 48 * 60 * 60)
+        monthly_count = await redis.incr(monthly_key)
+        if monthly_count == 1:
+            await redis.expire(monthly_key, 40 * 24 * 60 * 60)
+
+        if daily_count > daily_limit or monthly_count > monthly_limit:
+            await redis.decr(daily_key)
+            await redis.decr(monthly_key)
+            break
+
+        await redis.enqueue_job("poll_target", target.id)
 
 
 async def startup(ctx: dict) -> None:
