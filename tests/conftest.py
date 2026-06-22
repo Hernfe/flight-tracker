@@ -1,17 +1,19 @@
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 
 import asyncpg
 import pytest
 import pytest_asyncio
 import redis.asyncio as aioredis
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.core.db import Base
 
-# Import every model module so all tables register on Base.metadata.
+# Import every model module so the ORM mappings used by the tests are loaded.
 import app.modules.destinations.models  # noqa: F401
 import app.modules.flights.models  # noqa: F401
 import app.modules.price_history.models  # noqa: F401
@@ -21,6 +23,10 @@ TEST_DB_NAME = "appdb_test"
 
 _url = make_url(settings.database_url)
 _test_url = _url.set(database=TEST_DB_NAME)
+_test_url_str = _test_url.render_as_string(hide_password=False)
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI = _BACKEND_ROOT / "alembic.ini"
 
 
 async def _create_test_database() -> None:
@@ -41,18 +47,31 @@ async def _create_test_database() -> None:
         await conn.close()
 
 
-async def _create_schema() -> None:
-    engine = create_async_engine(_test_url.render_as_string(hide_password=False))
+async def _reset_schema() -> None:
+    # Drop everything so `alembic upgrade head` runs against a clean database,
+    # even if a previous test session left tables (and alembic_version) behind.
+    engine = create_async_engine(_test_url_str)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.exec_driver_sql("DROP SCHEMA public CASCADE")
+        await conn.exec_driver_sql("CREATE SCHEMA public")
     await engine.dispose()
+
+
+def _migrate_to_head() -> None:
+    # Build the test schema from the Alembic migration chain (the same chain
+    # production and development use). The test database URL is passed
+    # explicitly through the config's attributes so env.py targets appdb_test
+    # without modifying the user's .env / app settings.
+    alembic_cfg = Config(str(_ALEMBIC_INI))
+    alembic_cfg.attributes["sqlalchemy.url"] = _test_url_str
+    command.upgrade(alembic_cfg, "head")
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_test_db():
     asyncio.run(_create_test_database())
-    asyncio.run(_create_schema())
+    asyncio.run(_reset_schema())
+    _migrate_to_head()
 
 
 @pytest_asyncio.fixture
