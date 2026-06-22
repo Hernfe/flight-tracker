@@ -32,15 +32,29 @@ def parse_offers(response_body: dict) -> list[dict]:
             price_cents = round(float(amount) * 100)
         except (TypeError, ValueError):
             continue
-        slices = offer.get("slices", [])
+        # Stops bucket: the worst (most connections) slice, capped at 2 meaning
+        # "two or more". A round trip direct out / one stop back is bucket 1.
         stops = 0
-        if slices:
-            segments = slices[0].get("segments", [])
-            stops = max(len(segments) - 1, 0)
+        for sl in offer.get("slices", []):
+            segments = sl.get("segments", [])
+            stops = max(stops, len(segments) - 1)
+        stops = min(max(stops, 0), 2)
+
+        # Marketing carrier of the offer: the owning airline, falling back to the
+        # first segment's marketing carrier when the owner is absent.
         owner = offer.get("owner") or {}
+        carrier = owner.get("iata_code")
+        if carrier is None:
+            for sl in offer.get("slices", []):
+                segments = sl.get("segments", [])
+                if segments:
+                    mc = segments[0].get("marketing_carrier") or {}
+                    carrier = mc.get("iata_code")
+                    break
+
         parsed.append(
             {
-                "carrier": owner.get("iata_code"),
+                "carrier": carrier,
                 "price_cents": price_cents,
                 "currency": offer.get("total_currency", "EUR"),
                 "stops": stops,
@@ -122,7 +136,18 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
             else None
         )
 
+        cabin = params["cabin"]
+
+        # Per-airline layer: cheapest offer for every (carrier, stops, cabin)
+        # combination present in the response. cabin is constant per search.
+        best_by_combo: dict[tuple[str | None, int], dict] = {}
         for p in parsed:
+            key = (p["carrier"], p["stops"])
+            current = best_by_combo.get(key)
+            if current is None or p["price_cents"] < current["price_cents"]:
+                best_by_combo[key] = p
+
+        for (carrier, stops), p in best_by_combo.items():
             session.add(
                 FlightOffer(
                     raw_response_id=raw.id,
@@ -130,9 +155,9 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
                     destination=params["destination"],
                     departure_date=dep,
                     return_date=ret,
-                    cabin=params["cabin"],
-                    stops=p["stops"],
-                    carrier=p["carrier"],
+                    cabin=cabin,
+                    stops=stops,
+                    carrier=carrier,
                     fare_brand=None,
                     price_cents=p["price_cents"],
                     currency=p["currency"],
@@ -141,29 +166,34 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
                 )
             )
 
-        prices = sorted(p["price_cents"] for p in parsed)
-        cheapest = prices[0]
-        top_n = prices[:5]
-        mean_top_n = round(sum(top_n) / len(top_n))
-        cheapest_currency = next(
-            p["currency"] for p in parsed if p["price_cents"] == cheapest
-        )
+        # Fast lane: one row per (stops, cabin) bucket holding the single
+        # overall-cheapest offer across all carriers, recording the winner.
+        by_bucket: dict[int, list[dict]] = {}
+        for p in parsed:
+            by_bucket.setdefault(p["stops"], []).append(p)
 
-        session.add(
-            PriceHistory(
-                origin=params["origin"],
-                destination=params["destination"],
-                departure_date=dep,
-                return_date=ret,
-                cabin=params["cabin"],
-                source=raw.source,
-                cheapest_price_cents=cheapest,
-                mean_top_n_price_cents=mean_top_n,
-                n_offers=len(parsed),
-                currency=cheapest_currency,
-                observed_at=raw.observed_at,
+        for stops, group in by_bucket.items():
+            ranked = sorted(group, key=lambda x: x["price_cents"])
+            cheapest = ranked[0]
+            top_n = ranked[:5]
+            mean_top_n = round(sum(x["price_cents"] for x in top_n) / len(top_n))
+            session.add(
+                PriceHistory(
+                    origin=params["origin"],
+                    destination=params["destination"],
+                    departure_date=dep,
+                    return_date=ret,
+                    cabin=cabin,
+                    stops=stops,
+                    carrier=cheapest["carrier"],
+                    source=raw.source,
+                    cheapest_price_cents=cheapest["price_cents"],
+                    mean_top_n_price_cents=mean_top_n,
+                    n_offers=len(group),
+                    currency=cheapest["currency"],
+                    observed_at=raw.observed_at,
+                )
             )
-        )
 
         await session.commit()
 

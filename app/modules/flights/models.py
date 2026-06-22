@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, SmallInteger, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,8 +56,8 @@ class FlightOffer(Base):
     destination: Mapped[str]
     departure_date: Mapped[date]
     return_date: Mapped[date | None]
-    cabin: Mapped[str]
-    stops: Mapped[int]
+    cabin: Mapped[str] = mapped_column(server_default="economy")
+    stops: Mapped[int] = mapped_column(SmallInteger)
     carrier: Mapped[str | None]
     fare_brand: Mapped[str | None]
     price_cents: Mapped[int]
