@@ -20,6 +20,7 @@ class DuffelClient:
         departure_date: str,
         return_date: str | None = None,
         cabin_class: str = "economy",
+        max_connections: int = 1,
         supplier_timeout_ms: int = 15000,
     ) -> tuple[int, dict, str | None]:
         slices = [
@@ -42,6 +43,7 @@ class DuffelClient:
                 "slices": slices,
                 "passengers": [{"type": "adult"}],
                 "cabin_class": cabin_class,
+                "max_connections": max_connections,
             }
         }
         async with httpx.AsyncClient(base_url=self._base_url, timeout=30.0) as client:

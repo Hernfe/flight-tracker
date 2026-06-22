@@ -9,7 +9,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.modules.flights.models import PollTarget
+from app.core.db import Base
+
+# Import every model module so all tables register on Base.metadata.
+import app.modules.destinations.models  # noqa: F401
+import app.modules.flights.models  # noqa: F401
+import app.modules.price_history.models  # noqa: F401
+import app.modules.wishlists.models  # noqa: F401
 
 TEST_DB_NAME = "appdb_test"
 
@@ -38,7 +44,7 @@ async def _create_test_database() -> None:
 async def _create_schema() -> None:
     engine = create_async_engine(_test_url.render_as_string(hide_password=False))
     async with engine.begin() as conn:
-        await conn.run_sync(PollTarget.__table__.create, checkfirst=True)
+        await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
 
 
@@ -51,9 +57,14 @@ def _ensure_test_db():
 @pytest_asyncio.fixture
 async def test_engine():
     engine = create_async_engine(_test_url.render_as_string(hide_password=False))
-    # Start each test from a clean poll_targets table.
+    # Start each test from clean poll/wishlist tables. CASCADE clears the FK
+    # children (poll_target_reasons, wishlist_items, ...) in one shot.
     async with engine.begin() as conn:
-        await conn.exec_driver_sql("TRUNCATE TABLE poll_targets RESTART IDENTITY")
+        await conn.exec_driver_sql(
+            "TRUNCATE TABLE poll_targets, poll_target_reasons, "
+            "wishlist_items, wishlist_members, wishlists "
+            "RESTART IDENTITY CASCADE"
+        )
     yield engine
     await engine.dispose()
 

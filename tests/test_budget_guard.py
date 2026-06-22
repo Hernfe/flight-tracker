@@ -14,17 +14,17 @@ MONTHLY_TTL = 40 * 24 * 60 * 60
 async def make_target(
     session,
     *,
-    is_user_tracked: bool = False,
     due: bool = True,
     destination: str = "LHR",
+    next_poll_at: datetime | None = None,
 ) -> PollTarget:
     now = datetime.now(timezone.utc)
-    next_poll_at = now - timedelta(minutes=5) if due else now + timedelta(days=1)
+    if next_poll_at is None:
+        next_poll_at = now - timedelta(minutes=5) if due else now + timedelta(days=1)
     target = PollTarget(
         origin="HEL",
         destination=destination,
         departure_date=date.today() + timedelta(days=30),
-        is_user_tracked=is_user_tracked,
         next_poll_at=next_poll_at,
     )
     session.add(target)
@@ -68,20 +68,29 @@ async def test_monthly_budget_cap(db_session, spy_redis, redis_client, monkeypat
     assert await redis_client.get(daily_key) == "2"
 
 
-async def test_user_tracked_priority(db_session, spy_redis, monkeypatch):
+async def test_oldest_due_first(db_session, spy_redis, monkeypatch):
     monkeypatch.setattr(settings, "duffel_daily_search_budget", 2)
     monkeypatch.setattr(settings, "duffel_monthly_search_budget", 100)
-    # Insert coverage targets first to prove ordering is by column, not insertion.
-    await make_target(db_session, is_user_tracked=False, destination="C0")
-    await make_target(db_session, is_user_tracked=False, destination="C1")
-    u1 = await make_target(db_session, is_user_tracked=True, destination="U0")
-    u2 = await make_target(db_session, is_user_tracked=True, destination="U1")
+    now = datetime.now(timezone.utc)
+    # Insert newest-due first to prove ordering is by next_poll_at, not insertion.
+    await make_target(
+        db_session, destination="N0", next_poll_at=now - timedelta(minutes=1)
+    )
+    await make_target(
+        db_session, destination="N1", next_poll_at=now - timedelta(minutes=2)
+    )
+    o1 = await make_target(
+        db_session, destination="O0", next_poll_at=now - timedelta(hours=2)
+    )
+    o2 = await make_target(
+        db_session, destination="O1", next_poll_at=now - timedelta(hours=1)
+    )
 
     await schedule_due_polls({"redis": spy_redis})
 
-    queued_ids = {args[0] for _, args in spy_redis.enqueued}
-    assert len(spy_redis.enqueued) == 2
-    assert queued_ids == {u1.id, u2.id}
+    # Only the two oldest-due targets fit the budget, in oldest-first order.
+    queued_ids = [args[0] for _, args in spy_redis.enqueued]
+    assert queued_ids == [o1.id, o2.id]
 
 
 async def test_counter_expiry_set_on_first_create(
