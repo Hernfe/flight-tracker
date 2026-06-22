@@ -44,6 +44,7 @@ async def _create_test_database() -> None:
 async def _create_schema() -> None:
     engine = create_async_engine(_test_url.render_as_string(hide_password=False))
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     await engine.dispose()
 

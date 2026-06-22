@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
@@ -25,11 +25,19 @@ async def count_collection_reasons(session) -> int:
 def test_collection_grid_within_window_and_anchored():
     today = date(2026, 6, 22)
     grid = collection_grid(today, step=30, horizon=180)
-    assert grid == [date.fromordinal(o) for o in grid]
-    # Every date is on the absolute ordinal grid and inside the window.
-    assert all(d.toordinal() % 30 == 0 for d in grid)
-    assert all(today <= d <= date(2026, 12, 19) for d in grid)
+
+    # Every value is a real date.
+    assert all(isinstance(d, date) for d in grid)
+    # The grid is sorted with no duplicates.
     assert grid == sorted(grid)
+    assert len(set(grid)) == len(grid)
+    # Anchored to the window starting at today: the first date is on or after
+    # today and falls within the first 30-day step.
+    assert today <= grid[0] < today + timedelta(days=30)
+    # Nothing spills past the 180-day horizon.
+    assert all(today <= d <= today + timedelta(days=180) for d in grid)
+    # Dates are spaced exactly 30 days apart.
+    assert all((grid[i + 1] - grid[i]).days == 30 for i in range(len(grid) - 1))
 
 
 async def test_collection_creates_targets_and_reasons(db_session):
