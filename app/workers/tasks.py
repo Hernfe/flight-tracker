@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from typing import Any
 
 from arq import cron
 from arq.connections import RedisSettings
@@ -14,10 +15,13 @@ from app.modules.flights.models import ApiResponseRaw, FlightOffer, PollTarget
 from app.modules.flights.poll import has_tracking_reason, poll_interval
 from app.modules.price_history.models import PriceHistory
 
+# Arq worker context dict passed to every task/cron handler.
+type WorkerContext = dict[str, Any]
 
-def parse_offers(response_body: dict) -> list[dict]:
+
+def parse_offers(response_body: dict[str, Any]) -> list[dict[str, Any]]:
     offers = response_body.get("data", {}).get("offers", [])
-    parsed: list[dict] = []
+    parsed: list[dict[str, Any]] = []
     for offer in offers:
         amount = offer.get("total_amount")
         if amount is None:
@@ -57,7 +61,7 @@ def parse_offers(response_body: dict) -> list[dict]:
     return parsed
 
 
-async def poll_target(ctx: dict, target_id: int) -> None:
+async def poll_target(ctx: WorkerContext, target_id: int) -> None:
     async with SessionLocal() as session:
         target = await session.get(PollTarget, target_id)
         if target is None or not target.active:
@@ -107,7 +111,7 @@ async def poll_target(ctx: dict, target_id: int) -> None:
     await ctx["redis"].enqueue_job("normalize_response", raw_id)
 
 
-async def normalize_response(ctx: dict, raw_id: int) -> None:
+async def normalize_response(ctx: WorkerContext, raw_id: int) -> None:
     async with SessionLocal() as session:
         raw = await session.get(ApiResponseRaw, raw_id)
         if raw is None:
@@ -137,7 +141,7 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
 
         # Per-airline layer: cheapest offer for every (carrier, stops, cabin)
         # combination present in the response. cabin is constant per search.
-        best_by_combo: dict[tuple[str | None, int], dict] = {}
+        best_by_combo: dict[tuple[str | None, int], dict[str, Any]] = {}
         for p in parsed:
             key = (p["carrier"], p["stops"])
             current = best_by_combo.get(key)
@@ -165,7 +169,7 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
 
         # Fast lane: one row per (stops, cabin) bucket holding the single
         # overall-cheapest offer across all carriers, recording the winner.
-        by_bucket: dict[int, list[dict]] = {}
+        by_bucket: dict[int, list[dict[str, Any]]] = {}
         for p in parsed:
             by_bucket.setdefault(p["stops"], []).append(p)
 
@@ -216,7 +220,7 @@ async def normalize_response(ctx: dict, raw_id: int) -> None:
         await publish(event)
 
 
-async def schedule_due_polls(ctx: dict) -> None:
+async def schedule_due_polls(ctx: WorkerContext) -> None:
     redis = ctx["redis"]
     now = datetime.now(timezone.utc)
     today = now.date()
@@ -252,13 +256,13 @@ async def schedule_due_polls(ctx: dict) -> None:
         await redis.enqueue_job("poll_target", target.id)
 
 
-async def maintain_coverage(ctx: dict) -> None:
+async def maintain_coverage(ctx: WorkerContext) -> None:
     async with SessionLocal() as session:
         await run_maintainer(session)
         await session.commit()
 
 
-async def startup(ctx: dict) -> None:
+async def startup(ctx: WorkerContext) -> None:
     register_alert_subscriber()
     await schedule_due_polls(ctx)
 

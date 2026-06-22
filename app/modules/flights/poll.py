@@ -11,8 +11,10 @@ for tracked targets very close to departure.
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import delete, exists, select
+from sqlalchemy import delete, exists, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.modules.flights.models import PollTarget, PollTargetReason
 
@@ -36,8 +38,14 @@ def poll_interval(days_to_departure: int, *, has_tracking: bool) -> timedelta:
     return timedelta(hours=6) if has_tracking else timedelta(hours=12)
 
 
-def _key_clause(origin, destination, departure_date, return_date, cabin):
-    clause = [
+def _key_clause(
+    origin: str,
+    destination: str,
+    departure_date: date,
+    return_date: date | None,
+    cabin: str,
+) -> list[ColumnElement[bool]]:
+    clause: list[ColumnElement[bool]] = [
         PollTarget.origin == origin,
         PollTarget.destination == destination,
         PollTarget.departure_date == departure_date,
@@ -103,41 +111,40 @@ async def has_tracking_reason(session: AsyncSession, target_id: int) -> bool:
 
 
 async def add_collection_reason(session: AsyncSession, target: PollTarget) -> None:
-    present = await session.scalar(
-        select(
-            exists().where(
-                PollTargetReason.poll_target_id == target.id,
-                PollTargetReason.reason_type == "collection",
-            )
+    # Idempotent insert: the partial unique index on (poll_target_id) where
+    # reason_type='collection' makes duplicates a no-op, so repeated or
+    # concurrent calls in one transaction add a single collection reason
+    # without leaving the transaction in a failed state.
+    statement = (
+        pg_insert(PollTargetReason)
+        .values(poll_target_id=target.id, reason_type="collection")
+        .on_conflict_do_nothing(
+            index_elements=["poll_target_id"],
+            index_where=text("reason_type = 'collection'"),
         )
     )
-    if not present:
-        session.add(
-            PollTargetReason(poll_target_id=target.id, reason_type="collection")
-        )
+    await session.execute(statement)
     target.active = True
 
 
 async def add_tracking_reason(
     session: AsyncSession, target: PollTarget, wishlist_item_id: uuid.UUID
 ) -> None:
-    present = await session.scalar(
-        select(
-            exists().where(
-                PollTargetReason.poll_target_id == target.id,
-                PollTargetReason.reason_type == "tracking",
-                PollTargetReason.wishlist_item_id == wishlist_item_id,
-            )
+    # Idempotent insert against the partial unique index on
+    # (poll_target_id, wishlist_item_id) where reason_type='tracking'.
+    statement = (
+        pg_insert(PollTargetReason)
+        .values(
+            poll_target_id=target.id,
+            reason_type="tracking",
+            wishlist_item_id=wishlist_item_id,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["poll_target_id", "wishlist_item_id"],
+            index_where=text("reason_type = 'tracking'"),
         )
     )
-    if not present:
-        session.add(
-            PollTargetReason(
-                poll_target_id=target.id,
-                reason_type="tracking",
-                wishlist_item_id=wishlist_item_id,
-            )
-        )
+    await session.execute(statement)
     target.active = True
 
 

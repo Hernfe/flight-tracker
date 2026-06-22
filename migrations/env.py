@@ -15,7 +15,13 @@ import app.modules.price_history.models  # noqa: F401
 import app.modules.wishlists.models  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Callers (e.g. the test harness) may inject an explicit database URL via the
+# config's attributes; otherwise fall back to the application settings. This
+# lets the test suite migrate appdb_test without touching the user's .env.
+config.set_main_option(
+    "sqlalchemy.url",
+    config.attributes.get("sqlalchemy.url") or settings.database_url,
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

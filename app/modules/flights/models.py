@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -106,8 +107,8 @@ class ApiResponseRaw(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     source: Mapped[str]
-    request_params: Mapped[dict] = mapped_column(JSONB)
-    response_body: Mapped[dict] = mapped_column(JSONB)
+    request_params: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    response_body: Mapped[dict[str, Any]] = mapped_column(JSONB)
     http_status: Mapped[int]
     poll_target_id: Mapped[int | None] = mapped_column(ForeignKey("poll_targets.id"))
     request_id: Mapped[str]

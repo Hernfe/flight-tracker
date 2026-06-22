@@ -50,14 +50,25 @@ def item_target_dates(
     # flexible: every departure day across the window, with a representative
     # return derived from the minimum trip length (if any). Narrowing the window
     # by the user's free calendar slots is a later refinement.
-    start = max(item.window_start, today)
-    end = min(item.window_end, horizon)
+    #
+    # window_start/window_end are NOT NULL for flexible rows at the DB level, but
+    # mypy only sees them as date | None. Copy into locals and validate, which
+    # also guards against a malformed row. trip_length_min_days is genuinely
+    # optional, so it stays nullable and drives an optional return date.
+    window_start = item.window_start
+    window_end = item.window_end
+    if window_start is None or window_end is None:
+        raise ValueError("Flexible wishlist item is missing its date window")
+    trip_length_min = item.trip_length_min_days
+
+    start = max(window_start, today)
+    end = min(window_end, horizon)
     pairs: list[tuple[date, date | None]] = []
     day = start
     while day <= end:
         ret = (
-            day + timedelta(days=item.trip_length_min_days)
-            if item.trip_length_min_days is not None
+            day + timedelta(days=trip_length_min)
+            if trip_length_min is not None
             else None
         )
         pairs.append((day, ret))

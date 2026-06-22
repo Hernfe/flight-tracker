@@ -1,3 +1,5 @@
+from typing import Any
+
 import httpx
 
 from app.config import settings
@@ -22,7 +24,7 @@ class DuffelClient:
         cabin_class: str = "economy",
         max_connections: int = 1,
         supplier_timeout_ms: int = 15000,
-    ) -> tuple[int, dict, str | None]:
+    ) -> tuple[int, dict[str, Any], str | None]:
         slices = [
             {
                 "origin": origin,
