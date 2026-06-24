@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.core.db import SessionLocal
 from app.core.events import PriceBucketUpdated, publish
+from app.core.observability import init_sentry
 from app.integrations.duffel import DuffelClient
 from app.modules.alerts.subscriber import register as register_alert_subscriber
 from app.modules.flights.coverage import run_maintainer
@@ -263,6 +264,7 @@ async def maintain_coverage(ctx: WorkerContext) -> None:
 
 
 async def startup(ctx: WorkerContext) -> None:
+    init_sentry(web=False)
     register_alert_subscriber()
     await schedule_due_polls(ctx)
 

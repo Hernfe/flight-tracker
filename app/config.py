@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     duffel_daily_search_budget: int = 2000
     duffel_monthly_search_budget: int = 40000
+    sentry_dsn: str | None = None
+    price_freshness_max_age_minutes: int = 90
 
 
 settings = Settings()
